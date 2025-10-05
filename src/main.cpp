@@ -33,23 +33,23 @@ int32_t compteur_encodeur_gauche;
 bool test;
 uint32_t StartDecelerationTime;
 uint32_t LastDecelerationTime;
+uint32_t last_sample_time = 0;
 // Speed calculation variables
 float motor_0_rpm = 0.0;
 float motor_1_rpm = 0.0;
-uint32_t last_sample_time = 0;
 int nb_rotation;
 // PID parameters for motor 0
-float kp_0  = 0.009;
-float ki_0  = 0.00288;//0.00825f;
-float kd_0  = 0.00001;//0.00007f;  //0.00001f
+float kp_0  = 0.008;
+float ki_0  = 0.002250;//0.00288; //0.00825f;
+float kd_0  = 0;//0.00001;//0.00007f;  //0.00001f
 
 static float prev_error_0 = 0.0f;
 static float integral_0   = 0.0f;
 
 // PID parameters for motor 1
-float kp_1 = 0.009;  //0.007f
-float ki_1 = 0.003;//0.0075f; //0.0025f
-float kd_1 = 0;//0.000013; //0.00001f
+float kp_1 = 0.0099;  //0.007f
+float ki_1 = 0.00225;//0.0075f; //0.0025f
+float kd_1 = 0.0000013;//0.000013; //0.00001f
 float P0;
 float I0;
 float D0;
@@ -165,10 +165,10 @@ float rampTargetRPM(float targetRPM, uint32_t startTime, uint32_t currentTime) {
 }
 
 float downTargetRPM(float targetRPM, int32_t compteur_encodeur) {
-  float deac = 1;
+  float deac = 2.5;
   targetRPM = targetRPM - deac;
-  if(targetRPM<=10){
-    return 10;
+  if(targetRPM<=5){
+    return 5;
   }else{
     return (targetRPM = targetRPM - deac);
   }
@@ -188,7 +188,7 @@ void avancer(float vitesse_gauche, float vitesse_droite){
       if (movingForward) {
 
         float dt = (current_time - last_sample_time) / 1000.0f;
-       
+
         // Update encoder values
         pulses_0  = ENCODER_Read(0);
         pulses_1 = ENCODER_Read(1);
@@ -223,7 +223,7 @@ void avancer(float vitesse_gauche, float vitesse_droite){
 }
 
 void LigneDroite(float vitesse_gauche, float vitesse_droite){
-  avancer(76, 75);
+  avancer(130, 128.5);
   pulses_necessaires = ((pulses_par_tour*distance_parcourue)/ (PI*diametre));  // pour parcourir notre distance de 50 cm
   if (compteur_encodeur_gauche >= pulses_necessaires){
     if (rotation_droite_fait){
@@ -246,30 +246,30 @@ void LigneDroite(float vitesse_gauche, float vitesse_droite){
 }
 
 void TournerDroite(){
-  pulses_necessaires = 1888;// Pulses de l'encodeur//(rayon * angle); // pour tourner a 90 degre
+  pulses_necessaires = 1935;// Pulses de l'encodeur//(rayon * angle); // pour tourner a 90 degre
   if(debut_deplacement ==1){
     ENCODER_Reset(0); // encodeur gauche  //Vérifier si on peut l'enlever
     ENCODER_Reset(1); // encodeur droit   //Vérifier si on peut l'enlever
     debut_deplacement = 0;
   }
-  avancer(50, -50);
+  avancer(55, -55);
   if (abs(compteur_encodeur_gauche) >= pulses_necessaires){
     FinMouvement();
   }
 }
 
 void TournerGauche(){
-  pulses_necessaires = 1840;
+  pulses_necessaires = 1876;// Pulses de l'encodeur //(rayon * angle); // pour tourner a 90 degre
   if (debut_deplacement == 1){
     ENCODER_Reset(0); // encodeur gauche  //Vérifier si on peut l'enlever
     ENCODER_Reset(1); // encodeur droit   //Vérifier si on peut l'enlever
     debut_deplacement=0;
   }
-  avancer(-50, 51.2);
+  avancer(-55, 56.2);
   if (abs(compteur_encodeur_gauche) >= pulses_necessaires){
     FinMouvement();
   }
-   
+
 }
 void loop() {
   
@@ -280,10 +280,11 @@ void loop() {
       //float kp_1 = 0.0063f;  //0.007f
     }
   }
+
   if (etape == 1){
     if(deplacement_terminer == 0){
       if((rotation_droite_fait == 1) & (position_actuelle_colonne == 2)){
-           
+
         etape=2;
       }else if((rotation_gauche_fait == 1) & (position_actuelle_colonne == 0)){
         etape=3;
@@ -312,14 +313,14 @@ void loop() {
         
       nb_rotation++;
       etape = 5;
-       
+
       deplacement_terminer = 0;
       if(rotation_droite_fait){
         rotation_droite_fait = 0;
         dernier_rotation = 2;
       }else{
         rotation_gauche_fait =1;
-      }    
+      }
     }
       
   }
@@ -340,10 +341,12 @@ void loop() {
       }else{
         rotation_droite_fait =1;
       }
+
     }
+    
   } 
   if (etape == 5){ //object détecté
-     
+
     objet_detecte = fonctionDetectionObjet(pinCapteurGauche, pinCapteurDroit);
     if (objet_detecte == 1){
       etape=10;
@@ -367,6 +370,15 @@ void loop() {
       //Si la colonne est la deuxième ou la troisième
     if(position_actuelle_colonne == 1 or position_actuelle_colonne ==2){
       etape=30;
+    }
+
+    //test
+    if(position_actuelle_colonne == 2){
+      etape = 2;
+    }
+
+    if(position_actuelle_colonne == 0){
+      etape = 3;
     }
   }
     //La présente case est la première et qu'un objet est détecté en avant
