@@ -1,413 +1,430 @@
 #include <Arduino.h>
 #include <librobus.h>
-int parcours[3][10];        //Déclaration du tableau pour le parcours
-int position_actuelle_range;
-int pinCapteurGauche = 39; // DESC: branchements de la del de gauche sur l'arduino
-int pinCapteurDroit = 45; // DESC: branchement de la del de droite sur l'arduino
-int position_actuelle_colonne;
-bool objet_detecte;
-int etape = 0;
-int rotation_demander;    //1 = gauche, 2 = droite, 0 = aucune
-int seuilProx = 500;      //false = pas d'object devant, true = objet devant
-bool detectionObject = false; 
-bool rotation_droite_fait;
-bool rotation_gauche_fait;
-bool avancer_demander;
-bool deplacement_terminer;
-bool deplacement_terminer_rotation;
+
+/**************************************
+ *  DÉFINIR LES FONCTIONS
+ **************************************/
+void etat_attente();                // Attend que le robot soit lancé
+void etat_avancer();                // Avance dans le labyrinthe
+void etat_tourner_gauche();         // Effectue un virage à gauche
+void etat_tourner_droite();         // Effectue un virage à droite
+void etat_verif_obstacle();         // Vérifie présence d'obstacle devant
+void etat_obstacle_detecte();       // Gère la présence d'un obstacle
+void etat_premiere_colonne();       // Spécifique à la case de gauche
+void etat_choix_rotation();     // Gère les cases du centre et droite
+void etat_cellule_verifiee();       // Si la cellule a déjà été traitée
+
+/****************************************
+ *       VARIABLES PRINCIPALES          
+ ****************************************/
+int parcours[3][10];           // Tableau pour mémoriser les cases déjà explorées (3 colonnes x 10 lignes)
+int rang_actuel;               // Ligne actuelle du robot dans le labyrinthe
+int colonne_actuelle;          // Colonne actuelle du robot dans le labyrinthe
+
+int pin_capteur_gauche = 39;   // Numéro de broche Arduino pour le capteur gauche (de détection d'obstacle)
+int pin_capteur_droit = 45;    // Numéro de broche Arduino pour le capteur droit
+
+bool obstacle_detecte;         // Stocke le fait qu'un obstacle est devant le robot
+int etat = 0;                  // L'état courant de la machine à états (voir enum plus bas)
+int rotation_demande;          // Indique si une rotation est demandée (1=gauche, 2=droite, 0=aucune)
+bool rotation_droite_fait;     // Vrai si une rotation à droite vient d'être effectuée
+bool rotation_gauche_fait;     // Vrai si une rotation à gauche vient d'être effectuée
+bool deplacement_termine;      // Indique si l'action/mouvement du robot est terminée
 int32_t total_encodeur_gauche;
-int32_t total_encodeur_droit;
-int debut_deplacement;
-void ENCODER_Reset(uint8_t id);
-float speed; 
-const float diametre = 7.62; // en cm
+int32_t total_encodeur_droit; 
+int debut_deplacement;         // Indicateur pour savoir si on commence un nouveau déplacement
+
+// Paramètres physiques du robot
+const float diametre_roue = 7.62;    // Diamètre d'une roue en cm
 const int pulses_par_tour = 3200;
-const float distance_parcourue = 50; // en cm
-int32_t ENCODER_Read(uint8_t id);
-void MOTOR_SetSpeed(uint8_t id, float speed);
-int pulses_necessaires;
-const int rayon = 9.6; //en cm rayon du robot
-const int angle = 90; // en degre
-int32_t compteur_encodeur_droit;
-int32_t compteur_encodeur_gauche;
-bool test;
-uint32_t StartDecelerationTime;
-uint32_t LastDecelerationTime;
-uint32_t last_sample_time = 0;
-// Speed calculation variables
-float motor_0_rpm = 0.0;
-float motor_1_rpm = 0.0;
-int nb_rotation;
-// PID parameters for motor 0
-float kp_0  = 0.008;
-float ki_0  = 0.002250;//0.00288; //0.00825f;
-float kd_0  = 0;//0.00001;//0.00007f;  //0.00001f
+const float distance_a_parcourir = 50;  // Distance à parcourir sur chaque ligne en cm
 
-static float prev_error_0 = 0.0f;
-static float integral_0   = 0.0f;
+// Variables techniques pour le pilotage
+int pulses_necessaires;              // Nombre de pulses nécessaires pour parcourir une case
+int32_t cpt_encodeur_droit, cpt_encodeur_gauche;
+float vitesse_moteur_0 = 0.0, vitesse_moteur_1 = 0.0;
+int nb_rotations;                    // Nombre de rotations effectuées (utile pour la logique du labyrinthe)
 
-// PID parameters for motor 1
-float kp_1 = 0.0099;  //0.007f
-float ki_1 = 0.00225;//0.0075f; //0.0025f
-float kd_1 = 0.0000013;//0.000013; //0.00001f
-float P0;
-float I0;
-float D0;
-float output0;
-float P1;
-float I1;
-float D1;
-float output1;
-float error0;
-float error1;
-float target_rpm_motor0;
-float target_rpm_motor1;
-uint32_t elapsed;
-int32_t pulses_0;
-int32_t pulses_1;
-float power_0;
-float power_1;
-static float prev_error_1 = 0.0f;
-static float integral_1   = 0.0f;
-int dernier_rotation;
-float targetRPM_afterdown;
-// moving
-unsigned long moveStartTime = 0;
-bool movingForward = false;
+// Paramètres et états du PID pour le contrôle moteur
+float kp_0  = 0.008, ki_0  = 0.00225, kd_0  = 0;
+static float erreur_prec_0 = 0.0f, integrale_0 = 0.0f;
+
+float kp_1 = 0.0099, ki_1 = 0.00225, kd_1 = 0.0000013;
+static float erreur_prec_1 = 0.0f, integrale_1 = 0.0f;
+
+float prop_0, inte_0, deri_0, commande_0, err_0;
+float prop_1, inte_1, deri_1, commande_1, err_1;
+float cible_rpm_moteur_0, cible_rpm_moteur_1;
+float puissance_0, puissance_1;
+uint32_t der_temps_ech = 0;
+uint32_t temps_ecoule;
+int32_t pulses_0, pulses_1;
+int derniere_rotation;                 // Indique si la dernière rotation était à droite(2) ou à gauche(1)
+unsigned long debut_mouvement = 0;
+bool en_mouvement = false;          // Vrai si une commande d’avance est en cours
+uint32_t dernier_echantillon = 0;
+float cible_rpm_apres_desc = 0.0f;
+unsigned long temps_debut_deplacement = 0;
+bool avancer_demande;
+bool detection_objet = false;
+
+/*******************************************
+ *     array(list en python) pour état   
+ *******************************************/
+enum Etats {
+  E_ATTENTE = 0,
+  E_AVANCER = 1,
+  E_TOURNER_GAUCHE = 2,
+  E_TOURNER_DROITE = 3,
+  E_VERIF_OBSTACLE = 5,
+  E_OBSTACLE_DETECTE = 10,
+  E_CHOIX_ROTATION = 30,
+  E_CELLULE_VERIFIEE = 50,
+  E_NB_ETATS = 51           // Nombre total d’états connus
+};
+
+// function pointer en C++
+typedef void (*GestionnaireEtat)();
+GestionnaireEtat gestionnaires_etat[E_NB_ETATS] = {
+  etat_attente,            // 0 : Attente du bouton
+  etat_avancer,            // 1 : Avancer dans une case
+  etat_tourner_gauche,     // 2 : Tourner gauche
+  etat_tourner_droite,     // 3 : Tourner droite
+  nullptr,                 // 4 : null
+  etat_verif_obstacle,     // 5 : Vérifier obstacle
+  nullptr, nullptr, nullptr, nullptr, // 6-9
+  etat_obstacle_detecte,   // 10 : Gestion obstacle
+  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 11-19
+  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 20-29
+  etat_choix_rotation,     // 30 : Logique choix rotation colonne
+  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 31-39
+  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 40-49
+  etat_cellule_verifiee    // 50 : Cellule déjà vérifiée
+};
 
 
-void position(int, int);
-void ReglerPositionParcours(int, int);
-bool fonctionDetectionObjet(int, int);
+/***************************************************
+ *          FONCTIONS DE CALCUL DE BASE
+ ***************************************************/
 
-
-void setup() {
-  BoardInit();
-
-  ENCODER_Reset(0);
-  ENCODER_Reset(1);
-
-  last_sample_time = millis();
-  pinMode(pinCapteurGauche, INPUT);
-  pinMode(pinCapteurDroit, INPUT);
-  ReglerPositionParcours(1,0);
+float calculerRPM(int32_t nb_pulses, float intervalle_sec) {
+  // nb_pulses * 60s / deltaT * 3200 pulses
+  return (nb_pulses * 60.0f) / (intervalle_sec * pulses_par_tour);
 }
 
-
-float calculateRPM(int32_t pulse_count, float time_interval_seconds) {
-  return (pulse_count * 60.0f) / (time_interval_seconds * 3200);
+// PID pour le moteur gauche
+float PID_0(float vitesse_souhaitee, float vitesse_reel, float dt) { 
+  err_0 = vitesse_souhaitee - vitesse_reel;
+  prop_0 = kp_0 * err_0;
+  integrale_0 += err_0 * dt;
+  inte_0 = ki_0 * integrale_0;
+  deri_0 = kd_0 * ((err_0 - erreur_prec_0) / dt);
+  erreur_prec_0 = err_0;
+  commande_0 = prop_0 + inte_0 + deri_0;
+  return commande_0;
 }
 
-float pidControllerMotor0(float setpoint, float measured, float dt) {
-  error0 = setpoint - measured;
-  P0 = kp_0 * error0;
-  integral_0 += error0 * dt;
-  I0 = ki_0 * integral_0;
-  D0 = kd_0 * ((error0 - prev_error_0) / dt);
-  prev_error_0 = error0;
-  output0 = P0 + I0 + D0;
-  return output0;
+// PID pour le moteur droit
+float PID_1(float vitesse_souhaitee, float vitesse_reel, float dt) {
+  err_1 = vitesse_souhaitee - vitesse_reel;
+  prop_1 = kp_1 * err_1;
+  integrale_1 += err_1 * dt;
+  inte_1 = ki_1 * integrale_1;
+  deri_1 = kd_1 * ((err_1 - erreur_prec_1) / dt);
+  erreur_prec_1 = err_1;
+  commande_1 = prop_1 + inte_1 + deri_1;
+  return commande_1;
 }
-float pidControllerMotor1(float setpoint, float measured, float dt) {
-  error1 = setpoint - measured;
-  P1 = kp_1 * error1;
-  integral_1 += error1 * dt;
-  I1 = ki_1 * integral_1;
-  D1 = kd_1 * ((error1 - prev_error_1) / dt);
-  prev_error_1 = error1;
-  output1 = P1 + I1 + D1;
-  return output1;
-}
-void FinMouvement(){
+
+// Arrête le mouvement et réinitialise toutes les variables de déplacement
+void FinDeplacement() {
   MOTOR_SetSpeed(0, 0);
   MOTOR_SetSpeed(1, 0);
-  deplacement_terminer = 1;
-  compteur_encodeur_droit = 0;
-  compteur_encodeur_gauche = 0;
-  target_rpm_motor0=0;
-  target_rpm_motor1=0;
-  power_0=0;
-  power_1=0;
+  deplacement_termine = true;
+  cpt_encodeur_droit = 0;
+  cpt_encodeur_gauche = 0;
+  cible_rpm_moteur_0 = 0;
+  cible_rpm_moteur_1 = 0;
+  puissance_0 = puissance_1 = 0;
   debut_deplacement = 0;
-  power_0=0;
-  power_1=0;
-  integral_0=0;
-  error0=0;
-  I0=0;
-  prev_error_0=0;
-  integral_1=0;
-  error1=0;
-  I1=0;
-  prev_error_1=0;
-  motor_1_rpm = 0;
-  motor_0_rpm = 0;
-  movingForward=false;
+  integrale_0 = err_0 = inte_0 = erreur_prec_0 = 0;
+  integrale_1 = err_1 = inte_1 = erreur_prec_1 = 0;
+  vitesse_moteur_1 = 0;
+  vitesse_moteur_0 = 0;
+  en_mouvement = false;
 }
 
-bool fonctionDetectionObjet(int pinCapteurGauche, int pinCapteurDroit) { 
-  int valeurCapteurGauche = digitalRead(pinCapteurGauche); 
-  int valeurCapteurDroit = digitalRead(pinCapteurDroit);
-    if (valeurCapteurGauche != 1 || valeurCapteurDroit != 1) {
-      return true;
-    }
-    else {
-      return false;
-    }
-}
-// minimize the oscillation at beginning
-float rampTargetRPM(float targetRPM, uint32_t startTime, uint32_t currentTime) {
-  elapsed = currentTime - startTime;
-  float rampTime = 750; // 1 seconds ramp
-  if (elapsed >= rampTime){  
-    return targetRPM;
-  } 
-  return targetRPM * (elapsed / rampTime);
+// Renvoie true si au moins un capteur voit un obstacle devant
+bool fonctionDetectionObjet(int broche_g, int broche_d) {
+  int valeur_captuer_g = digitalRead(broche_g);
+  int valeur_capteur_d = digitalRead(broche_d);
+  return (valeur_captuer_g != 1 || valeur_capteur_d != 1);
 }
 
-float downTargetRPM(float targetRPM, int32_t compteur_encodeur) {
-  float deac = 2.5;
-  targetRPM = targetRPM - deac;
-  if(targetRPM<=5){
+float accelerationRPM(float RPM_souhaitee, uint32_t debut, uint32_t actuel) {
+  uint32_t ecoule = actuel - debut;
+  float rampe_ms = 750;       // temps d'acceleration
+  if (ecoule >= rampe_ms) {   // Si le temps écoulé est plus grand que la rampe, on retourn RPM_souhaitee
+    return RPM_souhaitee;
+  } else {                    // Sinon, on augmente progressivement la vitesse
+    return RPM_souhaitee * (float(ecoule) / rampe_ms);
+  }
+}
+
+float decelererConsigneRPM(float RPM_souhaitee) {
+  float decelerer = 2.5;  // coefficient de décélération
+
+  // On réduit la vitesse souhaitée
+  RPM_souhaitee -= decelerer;
+  
+  if (RPM_souhaitee <= 5) {   // RPM minimum 5
     return 5;
-  }else{
-    return (targetRPM = targetRPM - deac);
+  } else {
+    return RPM_souhaitee;
   }
 }
 
 
-void avancer(float vitesse_gauche, float vitesse_droite){
-  if(debut_deplacement == 0){
-    uint32_t current_time = millis();
-    if (current_time - last_sample_time >= 30) {
-      if (!movingForward) {
-        movingForward = true;
-        motor_0_rpm = 0;
-        motor_1_rpm=0;
-        moveStartTime = current_time;
+/*************************************************
+ *                MOUVEMENTS DE BASE
+ *************************************************/
+
+// donnée la vitesse(+, -) pour bouger le robot
+void bouger(float vitesse_gauche, float vitesse_droite) {
+  if (debut_deplacement == 0) {
+    uint32_t maintenant = millis();
+    if (maintenant - dernier_echantillon >= 30) {
+      if (!en_mouvement) {
+        en_mouvement = true;
+        vitesse_moteur_0 = vitesse_moteur_1 = 0;
+        debut_mouvement = maintenant;
       }
-      if (movingForward) {
-
-        float dt = (current_time - last_sample_time) / 1000.0f;
-
-        // Update encoder values
-        pulses_0  = ENCODER_Read(0);
+      if (en_mouvement) {
+        float dt = (maintenant - dernier_echantillon) / 1000.0f;
+        pulses_0 = ENCODER_Read(0);
         pulses_1 = ENCODER_Read(1);
-        compteur_encodeur_gauche += pulses_0;
-        compteur_encodeur_droit += pulses_1;
+
+        cpt_encodeur_gauche += pulses_0;
+        cpt_encodeur_droit += pulses_1;
+
         total_encodeur_gauche += pulses_0;
         total_encodeur_droit += pulses_1;
+
         ENCODER_Reset(0);
         ENCODER_Reset(1);
-        
-        motor_0_rpm = calculateRPM(pulses_0, dt);
-        motor_1_rpm = calculateRPM(pulses_1, dt);
 
-        // Calculate PID outputs
-        if(compteur_encodeur_gauche < 4500){
-          target_rpm_motor0 = rampTargetRPM(vitesse_gauche, moveStartTime, millis());
-          target_rpm_motor1 = rampTargetRPM(vitesse_droite, moveStartTime, millis());
-        }else{
-          target_rpm_motor0 = downTargetRPM(target_rpm_motor0, compteur_encodeur_gauche);
-          target_rpm_motor1 = downTargetRPM(target_rpm_motor1, compteur_encodeur_droit);
+        vitesse_moteur_0 = calculerRPM(pulses_0, dt);
+        vitesse_moteur_1 = calculerRPM(pulses_1, dt);
+
+        if (cpt_encodeur_gauche < 4500) {
+          cible_rpm_moteur_0 = accelerationRPM(vitesse_gauche, debut_mouvement, millis());
+          cible_rpm_moteur_1 = accelerationRPM(vitesse_droite, debut_mouvement, millis());
+        } else {
+          cible_rpm_moteur_0 = decelererConsigneRPM(cible_rpm_moteur_0);
+          cible_rpm_moteur_1 = decelererConsigneRPM(cible_rpm_moteur_1);
         }
-
-        power_0  = pidControllerMotor0(target_rpm_motor0, motor_0_rpm, dt);
-        power_1 = pidControllerMotor1(target_rpm_motor1, motor_1_rpm, dt);
-
-        MOTOR_SetSpeed(0, power_0);
-        MOTOR_SetSpeed(1, power_1);
-        last_sample_time = current_time;
-      } 
+        puissance_0 = PID_0(cible_rpm_moteur_0, vitesse_moteur_0, dt);
+        puissance_1 = PID_1(cible_rpm_moteur_1, vitesse_moteur_1, dt);
+        MOTOR_SetSpeed(0, puissance_0);
+        MOTOR_SetSpeed(1, puissance_1);
+        dernier_echantillon = maintenant;
+      }
     }
   }
 }
 
-void LigneDroite(float vitesse_gauche, float vitesse_droite){
-  avancer(130, 128.5);
-  pulses_necessaires = ((pulses_par_tour*distance_parcourue)/ (PI*diametre));  // pour parcourir notre distance de 50 cm
-  if (compteur_encodeur_gauche >= pulses_necessaires){
-    if (rotation_droite_fait){
-      position_actuelle_colonne++;
-    }
-    if (rotation_gauche_fait){
-      position_actuelle_colonne--;
-    }
-    if(!rotation_droite_fait & !rotation_gauche_fait){
-      position_actuelle_range ++;
-    }
-    
-    deplacement_terminer = 1;
-
-    if(deplacement_terminer == 1){
-      objet_detecte = fonctionDetectionObjet(pinCapteurGauche, pinCapteurDroit);
-        FinMouvement();      
-    }
-  }
-}
-
-void TournerDroite(){
-  pulses_necessaires = 1935;// Pulses de l'encodeur//(rayon * angle); // pour tourner a 90 degre
-  if(debut_deplacement ==1){
-    ENCODER_Reset(0); // encodeur gauche  //Vérifier si on peut l'enlever
-    ENCODER_Reset(1); // encodeur droit   //Vérifier si on peut l'enlever
-    debut_deplacement = 0;
-  }
-  avancer(55, -55);
-  if (abs(compteur_encodeur_gauche) >= pulses_necessaires){
-    FinMouvement();
-  }
-}
-
-void TournerGauche(){
-  pulses_necessaires = 1876;// Pulses de l'encodeur //(rayon * angle); // pour tourner a 90 degre
-  if (debut_deplacement == 1){
-    ENCODER_Reset(0); // encodeur gauche  //Vérifier si on peut l'enlever
-    ENCODER_Reset(1); // encodeur droit   //Vérifier si on peut l'enlever
-    debut_deplacement=0;
-  }
-  avancer(-55, 56.2);
-  if (abs(compteur_encodeur_gauche) >= pulses_necessaires){
-    FinMouvement();
-  }
-
-}
-void loop() {
+// Avance sur une ligne droite de 50 cm
+void avanceEnLigne(float v_g, float v_d) {
+  bouger(130, 128.5);    // PARAM: RPM_souhaitee
   
-  //Étape initiale
-  if(etape == 0){
-    if (ROBUS_IsBumper(3)) {
-      etape = 5;
-      //float kp_1 = 0.0063f;  //0.007f
-    }
-  }
+  // calcul pour parcourir notre distance de 50 cm
+  pulses_necessaires = ((pulses_par_tour*distance_a_parcourir)/(PI*diametre_roue));
+  
+  if (cpt_encodeur_gauche >= pulses_necessaires) {
+    // mis a jour sur sa position
+    if (rotation_droite_fait) colonne_actuelle++;
+    if (rotation_gauche_fait) colonne_actuelle--;
+    if(!rotation_droite_fait && !rotation_gauche_fait) rang_actuel++;
 
-  if (etape == 1){
-    if(deplacement_terminer == 0){
-      if((rotation_droite_fait == 1) & (position_actuelle_colonne == 2)){
-
-        etape=2;
-      }else if((rotation_gauche_fait == 1) & (position_actuelle_colonne == 0)){
-        etape=3;
-      }
-      else if(position_actuelle_range == 9){
-        etape = 0;
-      }
-      else{
-        nb_rotation = 0;
-        LigneDroite(40, 40);
-
-      }
+    deplacement_termine = 1;
+    if(deplacement_termine) {
+      obstacle_detecte = fonctionDetectionObjet(pin_capteur_gauche, pin_capteur_droit);
+      FinDeplacement();
     }
-    if(deplacement_terminer == 1){
-      etape = 5;
-      deplacement_terminer = 0;    
-    }
-  }
-  if(etape == 2){
-
-      //Vérifier que nous ne somme pas au bout du labyrinthe
-    //kd_1 = 0;
-    //kp_1=0.0067;
-    TournerGauche();
-    if(deplacement_terminer == 1){
-        
-      nb_rotation++;
-      etape = 5;
-
-      deplacement_terminer = 0;
-      if(rotation_droite_fait){
-        rotation_droite_fait = 0;
-        dernier_rotation = 2;
-      }else{
-        rotation_gauche_fait =1;
-      }
-    }
-      
-  }
-  if(etape == 3){
-
-    //Vérifier que nous ne somme pas au bout du labyrinthe
-    //kd_1 = 0;
-    //kp_1=0.0067;
-    TournerDroite();
-    if(deplacement_terminer == 1){
-        
-      nb_rotation++;
-      etape = 5;
-        deplacement_terminer = 0;
-      if(rotation_gauche_fait){
-        rotation_gauche_fait = 0;
-        dernier_rotation = 1;
-      }else{
-        rotation_droite_fait =1;
-      }
-
-    }
-    
-  } 
-  if (etape == 5){ //object détecté
-
-    objet_detecte = fonctionDetectionObjet(pinCapteurGauche, pinCapteurDroit);
-    if (objet_detecte == 1){
-      etape=10;
-    }else{
-        etape = 1;
-    }
-  }
-    //Un objet est détecté à l'avant
-  if (etape ==10){
-    if (parcours[position_actuelle_colonne][position_actuelle_range] == 2){
-      //La cellule a déjà été vérifiée, alors passer à la prochaine cellule
-      etape=50;
-    }else{
-      //Marqué la position actuelle comme vérifié 
-      parcours[position_actuelle_colonne][position_actuelle_range] = 2;
-    }
-    //Si la colonne est la première
-    if (position_actuelle_colonne == 0){
-      etape=20;
-    }
-      //Si la colonne est la deuxième ou la troisième
-    if(position_actuelle_colonne == 1 or position_actuelle_colonne ==2){
-      etape=30;
-    }
-
-    //test
-    if(position_actuelle_colonne == 2){
-      etape = 2;
-    }
-
-    if(position_actuelle_colonne == 0){
-      etape = 3;
-    }
-  }
-    //La présente case est la première et qu'un objet est détecté en avant
-  if(etape ==20){
-    etape = 3;
-  }
-  if(etape ==30){
-    if(position_actuelle_colonne == 1 & nb_rotation != 2){
-      if (rotation_gauche_fait){
-        etape = 3;       
-      } else if(rotation_droite_fait){
-        etape = 2;
-      }
-    }
-    if(((position_actuelle_colonne == 2 or position_actuelle_colonne == 1) & (!rotation_gauche_fait & !rotation_droite_fait)) & (nb_rotation != 2)){
-      etape =2;
-    }
-    if (nb_rotation == 2){
-      if(dernier_rotation == 1){
-        etape = 3;
-      }
-      if(dernier_rotation == 2){
-        etape = 2;
-      }
-    }    
   }
 }
 
-void ReglerPositionParcours(int colonne, int range){
-  position_actuelle_range = range;
-  position_actuelle_colonne = colonne;
+// Effectue un virage sur place à droite
+void tournerDroite(){
+  pulses_necessaires = 1935;
+  if(debut_deplacement == 1){
+    ENCODER_Reset(0); ENCODER_Reset(1); debut_deplacement = 0;
+  }
+  bouger(55, -55);
+  if (abs(cpt_encodeur_gauche) >= pulses_necessaires) FinDeplacement();
+}
+
+// Effectue un virage sur place à gauche
+void tournerGauche(){
+  pulses_necessaires = 1876;
+  if (debut_deplacement == 1){
+    ENCODER_Reset(0); ENCODER_Reset(1); debut_deplacement=0;
+  }
+  bouger(-55, 56.2);
+  if (abs(cpt_encodeur_gauche) >= pulses_necessaires) FinDeplacement();
+}
+
+// Initialise la position du robot au démarrage (void setup)
+void reglerPositionParcours(int colonne, int range){
+  rang_actuel = range;
+  colonne_actuelle = colonne;
+}
+
+
+/*****************************************
+ *   HANDLERS POUR CHAQUE ÉTAT DU ROBOT
+ *****************************************/
+/* E_ATTENTE
+Attente du bouton de démarrage pour lancer le parcours
+*/
+void etat_attente() {
+  // doit changer pour ROBUS_IsBumper(3) pour le sifflet
+  if (ROBUS_IsBumper(3)) etat = E_VERIF_OBSTACLE;
+}
+
+/* E_AVANCER
+Avance dans le labyrinthe tant que pas de détection ou fin de ligne
+*/
+void etat_avancer() {
+  if(!deplacement_termine){
+
+    // les cas des deux colonnes aux extrémités
+    if((rotation_droite_fait) && (colonne_actuelle == 2)) etat=E_TOURNER_GAUCHE;
+    else if((rotation_gauche_fait) && (colonne_actuelle == 0)) etat=E_TOURNER_DROITE;
+
+    // terminer la parcours
+    else if(rang_actuel == 9) etat = E_ATTENTE;
+
+    // cas normal
+    else { nb_rotations = 0; avanceEnLigne(40, 40); }
+  }
+
+  if(deplacement_termine){
+    etat = E_VERIF_OBSTACLE;
+    deplacement_termine = 0;    
+  }
+}
+
+/* E_TOURNER_GAUCHE
+Tourne à gauche puis revient sur la logique obstacle 
+*/
+void etat_tourner_gauche() {
+  tournerGauche();
+
+  if(deplacement_termine){
+    nb_rotations++;
+    etat = E_VERIF_OBSTACLE;
+    deplacement_termine = 0;
+
+    if(rotation_droite_fait) {
+      rotation_droite_fait = false;
+      derniere_rotation = 2;
+    }
+
+    else rotation_gauche_fait = true;
+  }
+}
+
+/* E_TOURNER_DROITE
+Tourne à droite
+*/
+void etat_tourner_droite() {
+  tournerDroite();
+
+  if(deplacement_termine){
+    nb_rotations++;
+    etat = E_VERIF_OBSTACLE;
+    deplacement_termine = 0;
+
+    if(rotation_gauche_fait){
+      rotation_gauche_fait = false;
+      derniere_rotation = 1;
+    }
+
+    else rotation_droite_fait = true;
+  }
+}
+
+/* E_VERIF_OBSTACLE
+Vérifie s’il y a un obstacle devant
+*/
+void etat_verif_obstacle() {
+  obstacle_detecte = fonctionDetectionObjet(pin_capteur_gauche, pin_capteur_droit);
+  if (obstacle_detecte) etat = E_OBSTACLE_DETECTE;
+  else etat = E_AVANCER;
+}
+
+/* E_OBSTACLE_DETECTE
+Réagit à la détection obstacle en marquant la cellule et décidant le prochain état (rotation ou déplacement)
+*/
+void etat_obstacle_detecte() {
+  // vérifi is les caisse déjà visitées
+  if (parcours[colonne_actuelle][rang_actuel] == 2) etat=E_CELLULE_VERIFIEE;
+  else parcours[colonne_actuelle][rang_actuel] = 2;
+
+  etat=E_CHOIX_ROTATION;
+}
+
+/* E_CHOIX_ROTATION
+Gère le choix de rotation selon les rotations précédentes
+*/
+void etat_choix_rotation() {
+  // rendre le robot droit
+  if((colonne_actuelle == 0 || colonne_actuelle == 1 || colonne_actuelle == 2) && nb_rotations != 2){
+    if (rotation_gauche_fait) etat = E_TOURNER_DROITE;       
+    else if(rotation_droite_fait) etat = E_TOURNER_GAUCHE;
+  }
+
+  // tourner gauche par défaut (colonnes 1 et 2)
+  if(((colonne_actuelle == 2 || colonne_actuelle == 1) && (!rotation_gauche_fait && !rotation_droite_fait)) && (nb_rotations != 2)){
+    etat = E_TOURNER_GAUCHE;
+  }
+
+  // tourner droit dans les colonnes 0
+  if((colonne_actuelle == 0 && (!rotation_gauche_fait && !rotation_droite_fait)) && (nb_rotations != 2)){
+    etat = E_TOURNER_DROITE;
+  }
+
+  // tourner et détecter une obstacle.
+  if (nb_rotations == 2){
+    if(derniere_rotation == 1) etat = E_TOURNER_DROITE;
+    if(derniere_rotation == 2) etat = E_TOURNER_GAUCHE;
+  }    
+}
+
+/* E_CELLULE_VERIFIEE
+Si la cellule a déjà été vérifiée, reste sur place ou attend un nouvel événement
+*/
+void etat_cellule_verifiee() {
+}
+
+/*****************************************
+ *   INITIALISATION ET BOUCLE
+ *****************************************/
+void setup() {
+  BoardInit();
+  ENCODER_Reset(0);
+  ENCODER_Reset(1);
+  dernier_echantillon = millis();
+  pinMode(pin_capteur_gauche, INPUT);
+  pinMode(pin_capteur_droit, INPUT);
+  reglerPositionParcours(1,0);
+}
+
+void loop() {
+  if (etat >= 0 && etat < E_NB_ETATS) {
+    // utiliser function pointer qui est défini au début
+    GestionnaireEtat h = gestionnaires_etat[etat];
+    if (h) h();
+  }
 }
