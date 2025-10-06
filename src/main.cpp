@@ -10,7 +10,6 @@ void etat_tourner_gauche();         // Effectue un virage à gauche
 void etat_tourner_droite();         // Effectue un virage à droite
 void etat_verif_obstacle();         // Vérifie présence d'obstacle devant
 void etat_obstacle_detecte();       // Gère la présence d'un obstacle
-void etat_premiere_colonne();       // Spécifique à la case de gauche
 void etat_choix_rotation();     // Gère les cases du centre et droite
 void etat_cellule_verifiee();       // Si la cellule a déjà été traitée
 
@@ -37,7 +36,7 @@ int debut_deplacement;         // Indicateur pour savoir si on commence un nouve
 // Paramètres physiques du robot
 const float diametre_roue = 7.62;    // Diamètre d'une roue en cm
 const int pulses_par_tour = 3200;
-const float distance_a_parcourir = 50;  // Distance à parcourir sur chaque ligne en cm
+const float distance_a_parcourir = 49.5;  // Distance à parcourir sur chaque ligne en cm
 
 // Variables techniques pour le pilotage
 int pulses_necessaires;              // Nombre de pulses nécessaires pour parcourir une case
@@ -71,35 +70,59 @@ bool detection_objet = false;
 /*******************************************
  *     array(list en python) pour état   
  *******************************************/
+// enum Etats {
+//   E_ATTENTE = 0,
+//   E_AVANCER = 1,
+//   E_TOURNER_GAUCHE = 2,
+//   E_TOURNER_DROITE = 3,
+//   E_VERIF_OBSTACLE = 5,
+//   E_OBSTACLE_DETECTE = 10,
+//   E_CHOIX_ROTATION = 30,
+//   E_CELLULE_VERIFIEE = 50,
+//   E_NB_ETATS = 51           // Nombre total d’états connus
+// };
+
 enum Etats {
   E_ATTENTE = 0,
   E_AVANCER = 1,
   E_TOURNER_GAUCHE = 2,
   E_TOURNER_DROITE = 3,
-  E_VERIF_OBSTACLE = 5,
-  E_OBSTACLE_DETECTE = 10,
-  E_CHOIX_ROTATION = 30,
-  E_CELLULE_VERIFIEE = 50,
-  E_NB_ETATS = 51           // Nombre total d’états connus
+  E_VERIF_OBSTACLE = 4,
+  E_OBSTACLE_DETECTE = 5,
+  E_CHOIX_ROTATION = 6,
+  E_CELLULE_VERIFIEE = 7,
+  E_NB_ETATS = 8           // Nombre total d’états connus
 };
 
 // function pointer en C++
+// typedef void (*GestionnaireEtat)();
+// GestionnaireEtat gestionnaires_etat[E_NB_ETATS] = {
+//   etat_attente,            // 0 : Attente du bouton
+//   etat_avancer,            // 1 : Avancer dans une case
+//   etat_tourner_gauche,     // 2 : Tourner gauche
+//   etat_tourner_droite,     // 3 : Tourner droite
+//   nullptr,                 // 4 : null
+//   etat_verif_obstacle,     // 5 : Vérifier obstacle
+//   nullptr, nullptr, nullptr, nullptr, // 6-9
+//   etat_obstacle_detecte,   // 10 : Gestion obstacle
+//   nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 11-19
+//   nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 20-29
+//   etat_choix_rotation,     // 30 : Logique choix rotation colonne
+//   nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 31-39
+//   nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 40-49
+//   etat_cellule_verifiee    // 50 : Cellule déjà vérifiée
+// };
+
 typedef void (*GestionnaireEtat)();
 GestionnaireEtat gestionnaires_etat[E_NB_ETATS] = {
   etat_attente,            // 0 : Attente du bouton
   etat_avancer,            // 1 : Avancer dans une case
   etat_tourner_gauche,     // 2 : Tourner gauche
   etat_tourner_droite,     // 3 : Tourner droite
-  nullptr,                 // 4 : null
-  etat_verif_obstacle,     // 5 : Vérifier obstacle
-  nullptr, nullptr, nullptr, nullptr, // 6-9
-  etat_obstacle_detecte,   // 10 : Gestion obstacle
-  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 11-19
-  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 20-29
-  etat_choix_rotation,     // 30 : Logique choix rotation colonne
-  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 31-39
-  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, // 40-49
-  etat_cellule_verifiee    // 50 : Cellule déjà vérifiée
+  etat_verif_obstacle,     // 4 : Vérifier obstacle
+  etat_obstacle_detecte,   // 5 : Gestion obstacle
+  etat_choix_rotation,     // 6 : Logique choix rotation colonne
+  etat_cellule_verifiee    // 7 : Cellule déjà vérifiée
 };
 
 
@@ -172,7 +195,7 @@ float accelerationRPM(float RPM_souhaitee, uint32_t debut, uint32_t actuel) {
 }
 
 float decelererConsigneRPM(float RPM_souhaitee) {
-  float decelerer = 2.5;  // coefficient de décélération
+  float decelerer = 5;  // coefficient de décélération
 
   // On réduit la vitesse souhaitée
   RPM_souhaitee -= decelerer;
@@ -220,7 +243,7 @@ void bouger(float vitesse_gauche, float vitesse_droite) {
           cible_rpm_moteur_0 = accelerationRPM(vitesse_gauche, debut_mouvement, millis());
           cible_rpm_moteur_1 = accelerationRPM(vitesse_droite, debut_mouvement, millis());
         } else {
-          cible_rpm_moteur_0 = decelererConsigneRPM(cible_rpm_moteur_0);
+          cible_rpm_moteur_0 = decelererConsigneRPM(cible_rpm_moteur_0)-0.1;
           cible_rpm_moteur_1 = decelererConsigneRPM(cible_rpm_moteur_1);
         }
         puissance_0 = PID_0(cible_rpm_moteur_0, vitesse_moteur_0, dt);
@@ -256,7 +279,7 @@ void avanceEnLigne(float v_g, float v_d) {
 
 // Effectue un virage sur place à droite
 void tournerDroite(){
-  pulses_necessaires = 1935;
+  pulses_necessaires = 1918;
   if(debut_deplacement == 1){
     ENCODER_Reset(0); ENCODER_Reset(1); debut_deplacement = 0;
   }
@@ -266,7 +289,7 @@ void tournerDroite(){
 
 // Effectue un virage sur place à gauche
 void tournerGauche(){
-  pulses_necessaires = 1876;
+  pulses_necessaires = 1846;
   if (debut_deplacement == 1){
     ENCODER_Reset(0); ENCODER_Reset(1); debut_deplacement=0;
   }
