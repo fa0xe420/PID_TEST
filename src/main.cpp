@@ -23,6 +23,10 @@ int colonne_actuelle;          // Colonne actuelle du robot dans le labyrinthe
 int pin_capteur_gauche = 39;   // Numéro de broche Arduino pour le capteur gauche (de détection d'obstacle)
 int pin_capteur_droit = 45;    // Numéro de broche Arduino pour le capteur droit
 
+int pinSifflet = A3; // definir le pin d'entrée du sifflet sur l'arduino
+int pinBruitAmbiant = A4; // definir le pin d'entrée du bruit ambiant sur l'arduino
+int del = 0;
+
 bool obstacle_detecte;         // Stocke le fait qu'un obstacle est devant le robot
 int etat = 0;                  // L'état courant de la machine à états (voir enum plus bas)
 int rotation_demande;          // Indique si une rotation est demandée (1=gauche, 2=droite, 0=aucune)
@@ -303,6 +307,21 @@ void reglerPositionParcours(int colonne, int range){
   colonne_actuelle = colonne;
 }
 
+bool fonctionDetectionSifflet(int differenceDeclenchement= 50) { // a mettre dans le void loop()
+  int valeurPinSifflet = analogRead(pinSifflet);
+  int valeurBruitAmbiant = analogRead(pinBruitAmbiant);
+  int difference = valeurPinSifflet - valeurBruitAmbiant;
+  Serial.print("Bruit Ambiant: ");
+  Serial.print(valeurBruitAmbiant);
+  Serial.print(" Sifflet: ");
+  Serial.print(valeurPinSifflet);
+  if (difference >= differenceDeclenchement ) { // Si false trig --> augmenter differenceDeclenchement
+    return true;                                // Si not trig --> baisser differenceDeclenchement
+  }
+  else {
+    return false;
+  }
+}
 
 /*****************************************
  *   HANDLERS POUR CHAQUE ÉTAT DU ROBOT
@@ -312,7 +331,7 @@ Attente du bouton de démarrage pour lancer le parcours
 */
 void etat_attente() {
   // doit changer pour ROBUS_IsBumper(3) pour le sifflet
-  if (ROBUS_IsBumper(3)) etat = E_VERIF_OBSTACLE;
+  if (ROBUS_IsBumper(3)||fonctionDetectionSifflet()) etat = E_VERIF_OBSTACLE;
 }
 
 /* E_AVANCER
