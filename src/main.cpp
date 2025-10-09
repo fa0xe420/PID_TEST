@@ -16,16 +16,12 @@ void etat_cellule_verifiee();       // Si la cellule a déjà été traitée
 /****************************************
  *       VARIABLES PRINCIPALES          
  ****************************************/
-int parcours[3][10];           // Tableau pour mémoriser les cases déjà explorées (3 colonnes x 10 lignes)
+int parcours[3][11];           // Tableau pour mémoriser les cases déjà explorées (3 colonnes x 10 lignes)
 int rang_actuel;               // Ligne actuelle du robot dans le labyrinthe
 int colonne_actuelle;          // Colonne actuelle du robot dans le labyrinthe
 
 int pin_capteur_gauche = 39;   // Numéro de broche Arduino pour le capteur gauche (de détection d'obstacle)
 int pin_capteur_droit = 45;    // Numéro de broche Arduino pour le capteur droit
-
-int pinSifflet = A3; // definir le pin d'entrée du sifflet sur l'arduino
-int pinBruitAmbiant = A4; // definir le pin d'entrée du bruit ambiant sur l'arduino
-int del = 0;
 
 bool obstacle_detecte;         // Stocke le fait qu'un obstacle est devant le robot
 int etat = 0;                  // L'état courant de la machine à états (voir enum plus bas)
@@ -40,7 +36,7 @@ int debut_deplacement;         // Indicateur pour savoir si on commence un nouve
 // Paramètres physiques du robot
 const float diametre_roue = 7.62;    // Diamètre d'une roue en cm
 const int pulses_par_tour = 3200;
-const float distance_a_parcourir = 49.5;  // Distance à parcourir sur chaque ligne en cm
+const float distance_a_parcourir = 49;  // Distance à parcourir sur chaque ligne en cm
 
 // Variables techniques pour le pilotage
 int pulses_necessaires;              // Nombre de pulses nécessaires pour parcourir une case
@@ -49,10 +45,10 @@ float vitesse_moteur_0 = 0.0, vitesse_moteur_1 = 0.0;
 int nb_rotations;                    // Nombre de rotations effectuées (utile pour la logique du labyrinthe)
 
 // Paramètres et états du PID pour le contrôle moteur
-float kp_0  = 0.008, ki_0  = 0.00225, kd_0  = 0;
+float kp_0  = 0.009, ki_0  = 0.00288, kd_0  = 0.00001;
 static float erreur_prec_0 = 0.0f, integrale_0 = 0.0f;
 
-float kp_1 = 0.0099, ki_1 = 0.00225, kd_1 = 0.0000013;
+float kp_1 = 0.009, ki_1 = 0.00275, kd_1 = 0;
 static float erreur_prec_1 = 0.0f, integrale_1 = 0.0f;
 
 float prop_0, inte_0, deri_0, commande_0, err_0;
@@ -70,6 +66,10 @@ float cible_rpm_apres_desc = 0.0f;
 unsigned long temps_debut_deplacement = 0;
 bool avancer_demande;
 bool detection_objet = false;
+int pinSifflet = A4; // definir le pin d'entrée du sifflet sur l'arduino
+int pinBruitAmbiant = A3; // definir le pin d'entrée du bruit ambiant sur l'arduino
+int del = 0;
+
 
 /*******************************************
  *     array(list en python) pour état   
@@ -134,6 +134,17 @@ GestionnaireEtat gestionnaires_etat[E_NB_ETATS] = {
  *          FONCTIONS DE CALCUL DE BASE
  ***************************************************/
 
+bool fonctionDetectionSifflet(int differenceDeclenchement= 500) { // a mettre dans le void loop()
+  int valeurPinSifflet = analogRead(pinSifflet);
+  int valeurBruitAmbiant = analogRead(pinBruitAmbiant);
+  int difference = valeurPinSifflet - valeurBruitAmbiant;
+  if (difference >= differenceDeclenchement ) { // Si false trig --> augmenter differenceDeclenchement 
+    return true;                                // Si not trig --> baisser differenceDeclenchement
+  }
+  else {
+    return false;
+  }
+}
 float calculerRPM(int32_t nb_pulses, float intervalle_sec) {
   // nb_pulses * 60s / deltaT * 3200 pulses
   return (nb_pulses * 60.0f) / (intervalle_sec * pulses_par_tour);
@@ -283,22 +294,22 @@ void avanceEnLigne(float v_g, float v_d) {
 
 // Effectue un virage sur place à droite
 void tournerDroite(){
-  pulses_necessaires = 1918;
+  pulses_necessaires = 1900;  //1832
   if(debut_deplacement == 1){
     ENCODER_Reset(0); ENCODER_Reset(1); debut_deplacement = 0;
   }
-  bouger(55, -55);
-  if (abs(cpt_encodeur_gauche) >= pulses_necessaires) FinDeplacement();
+  bouger(54.45, -55.15);
+  if ((abs(cpt_encodeur_gauche)/* & abs(cpt_encodeur_droit)*/) >= pulses_necessaires) FinDeplacement();
 }
 
 // Effectue un virage sur place à gauche
 void tournerGauche(){
-  pulses_necessaires = 1846;
+  pulses_necessaires = 1850;  //1793
   if (debut_deplacement == 1){
     ENCODER_Reset(0); ENCODER_Reset(1); debut_deplacement=0;
   }
-  bouger(-55, 56.2);
-  if (abs(cpt_encodeur_gauche) >= pulses_necessaires) FinDeplacement();
+  bouger(-55, 57);
+  if ((abs(cpt_encodeur_gauche) /*& abs(cpt_encodeur_droit)*/) >= pulses_necessaires) FinDeplacement();
 }
 
 // Initialise la position du robot au démarrage (void setup)
@@ -307,21 +318,6 @@ void reglerPositionParcours(int colonne, int range){
   colonne_actuelle = colonne;
 }
 
-bool fonctionDetectionSifflet(int differenceDeclenchement= 50) { // a mettre dans le void loop()
-  int valeurPinSifflet = analogRead(pinSifflet);
-  int valeurBruitAmbiant = analogRead(pinBruitAmbiant);
-  int difference = valeurPinSifflet - valeurBruitAmbiant;
-  Serial.print("Bruit Ambiant: ");
-  Serial.print(valeurBruitAmbiant);
-  Serial.print(" Sifflet: ");
-  Serial.print(valeurPinSifflet);
-  if (difference >= differenceDeclenchement ) { // Si false trig --> augmenter differenceDeclenchement
-    return true;                                // Si not trig --> baisser differenceDeclenchement
-  }
-  else {
-    return false;
-  }
-}
 
 /*****************************************
  *   HANDLERS POUR CHAQUE ÉTAT DU ROBOT
@@ -331,7 +327,8 @@ Attente du bouton de démarrage pour lancer le parcours
 */
 void etat_attente() {
   // doit changer pour ROBUS_IsBumper(3) pour le sifflet
-  if (ROBUS_IsBumper(3)||fonctionDetectionSifflet()) etat = E_VERIF_OBSTACLE;
+  del = fonctionDetectionSifflet();
+  if (ROBUS_IsBumper(3) || del) etat = E_VERIF_OBSTACLE;
 }
 
 /* E_AVANCER
@@ -345,7 +342,7 @@ void etat_avancer() {
     else if((rotation_gauche_fait) && (colonne_actuelle == 0)) etat=E_TOURNER_DROITE;
 
     // terminer la parcours
-    else if(rang_actuel == 9) etat = E_ATTENTE;
+    else if(rang_actuel == 10) etat = E_ATTENTE;
 
     // cas normal
     else { nb_rotations = 0; avanceEnLigne(40, 40); }
@@ -429,6 +426,7 @@ void etat_choix_rotation() {
 
   // tourner gauche par défaut (colonnes 1 et 2)
   if(((colonne_actuelle == 2 || colonne_actuelle == 1) && (!rotation_gauche_fait && !rotation_droite_fait)) && (nb_rotations != 2)){
+    // etat = E_TOURNER_GAUCHE;
     etat = E_TOURNER_GAUCHE;
   }
 
@@ -460,10 +458,13 @@ void setup() {
   dernier_echantillon = millis();
   pinMode(pin_capteur_gauche, INPUT);
   pinMode(pin_capteur_droit, INPUT);
+  pinMode(pinSifflet, INPUT);
+  pinMode(pinBruitAmbiant, INPUT);
   reglerPositionParcours(1,0);
 }
 
 void loop() {
+  
   if (etat >= 0 && etat < E_NB_ETATS) {
     // utiliser function pointer qui est défini au début
     GestionnaireEtat h = gestionnaires_etat[etat];
