@@ -12,13 +12,25 @@ void etat_verif_obstacle();         // Vérifie présence d'obstacle devant
 void etat_obstacle_detecte();       // Gère la présence d'un obstacle
 void etat_choix_rotation();     // Gère les cases du centre et droite
 void etat_cellule_verifiee();       // Si la cellule a déjà été traitée
+void etat_retour();
+void etat_retour1();
+void etat_retour2();
+void etat_retour3();
 
 /****************************************
  *       VARIABLES PRINCIPALES          
  ****************************************/
 int parcours[3][11];           // Tableau pour mémoriser les cases déjà explorées (3 colonnes x 10 lignes)
+int lignes_interdites[3][11] = {      //Savoir où sont les lignes + ligne 348 pour gérer, mais pas sûr qu'il va fonctionner.
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+};
+
+
 int rang_actuel;               // Ligne actuelle du robot dans le labyrinthe
 int colonne_actuelle;          // Colonne actuelle du robot dans le labyrinthe
+bool retour_commencer;
 
 int pin_capteur_gauche = 39;   // Numéro de broche Arduino pour le capteur gauche (de détection d'obstacle)
 int pin_capteur_droit = 45;    // Numéro de broche Arduino pour le capteur droit
@@ -36,7 +48,7 @@ int debut_deplacement;         // Indicateur pour savoir si on commence un nouve
 // Paramètres physiques du robot
 const float diametre_roue = 7.62;    // Diamètre d'une roue en cm
 const int pulses_par_tour = 3200;
-const float distance_a_parcourir = 49;  // Distance à parcourir sur chaque ligne en cm
+const float distance_a_parcourir = 49.5;  // Distance à parcourir sur chaque ligne en cm
 
 // Variables techniques pour le pilotage
 int pulses_necessaires;              // Nombre de pulses nécessaires pour parcourir une case
@@ -95,7 +107,13 @@ enum Etats {
   E_OBSTACLE_DETECTE = 5,
   E_CHOIX_ROTATION = 6,
   E_CELLULE_VERIFIEE = 7,
-  E_NB_ETATS = 8           // Nombre total d’états connus
+  E_RETOUR = 8,
+  E_RETOUR1 = 9,
+  E_RETOUR2 = 10,
+  E_RETOUR3 = 11,
+  E_NB_ETATS = 12
+
+             // Nombre total d’états connus
 };
 
 // function pointer en C++
@@ -126,7 +144,12 @@ GestionnaireEtat gestionnaires_etat[E_NB_ETATS] = {
   etat_verif_obstacle,     // 4 : Vérifier obstacle
   etat_obstacle_detecte,   // 5 : Gestion obstacle
   etat_choix_rotation,     // 6 : Logique choix rotation colonne
-  etat_cellule_verifiee    // 7 : Cellule déjà vérifiée
+  etat_cellule_verifiee,    // 7 : Cellule déjà vérifiée
+  etat_retour,               // 8: retour
+  etat_retour1,               // 8: retour
+  etat_retour2,               // 8: retour
+  etat_retour3
+
 };
 
 
@@ -176,8 +199,8 @@ float PID_1(float vitesse_souhaitee, float vitesse_reel, float dt) {
 
 // Arrête le mouvement et réinitialise toutes les variables de déplacement
 void FinDeplacement() {
-  MOTOR_SetSpeed(0, 0);
   MOTOR_SetSpeed(1, 0);
+  MOTOR_SetSpeed(0, 0);
   deplacement_termine = true;
   cpt_encodeur_droit = 0;
   cpt_encodeur_gauche = 0;
@@ -274,6 +297,7 @@ void bouger(float vitesse_gauche, float vitesse_droite) {
 // Avance sur une ligne droite de 50 cm
 void avanceEnLigne(float v_g, float v_d) {
   bouger(130, 128.5);    // PARAM: RPM_souhaitee
+  // bouger(200, 197.6);    // PARAM: RPM_souhaitee
   
   // calcul pour parcourir notre distance de 50 cm
   pulses_necessaires = ((pulses_par_tour*distance_a_parcourir)/(PI*diametre_roue));
@@ -282,7 +306,13 @@ void avanceEnLigne(float v_g, float v_d) {
     // mis a jour sur sa position
     if (rotation_droite_fait) colonne_actuelle++;
     if (rotation_gauche_fait) colonne_actuelle--;
-    if(!rotation_droite_fait && !rotation_gauche_fait) rang_actuel++;
+    if(!rotation_droite_fait && !rotation_gauche_fait && !retour_commencer){
+      rang_actuel++;
+    }
+    if(!rotation_droite_fait && !rotation_gauche_fait && retour_commencer){
+      rang_actuel--;
+    }
+
 
     deplacement_termine = 1;
     if(deplacement_termine) {
@@ -294,7 +324,7 @@ void avanceEnLigne(float v_g, float v_d) {
 
 // Effectue un virage sur place à droite
 void tournerDroite(){
-  pulses_necessaires = 1900;  //1832
+  pulses_necessaires = 1910;  //1832
   if(debut_deplacement == 1){
     ENCODER_Reset(0); ENCODER_Reset(1); debut_deplacement = 0;
   }
@@ -304,7 +334,7 @@ void tournerDroite(){
 
 // Effectue un virage sur place à gauche
 void tournerGauche(){
-  pulses_necessaires = 1850;  //1793
+  pulses_necessaires = 1840;  //1793
   if (debut_deplacement == 1){
     ENCODER_Reset(0); ENCODER_Reset(1); debut_deplacement=0;
   }
@@ -328,7 +358,8 @@ Attente du bouton de démarrage pour lancer le parcours
 void etat_attente() {
   // doit changer pour ROBUS_IsBumper(3) pour le sifflet
   del = fonctionDetectionSifflet();
-  if (ROBUS_IsBumper(3) || del) etat = E_VERIF_OBSTACLE;
+  // if (ROBUS_IsBumper(3) || del) etat = E_VERIF_OBSTACLE;
+  if (ROBUS_IsBumper(3) || del) etat = E_TOURNER_GAUCHE;
 }
 
 /* E_AVANCER
@@ -337,12 +368,16 @@ Avance dans le labyrinthe tant que pas de détection ou fin de ligne
 void etat_avancer() {
   if(!deplacement_termine){
 
+    // hmm... not sure
+    // if (lignes_interdites[colonne_actuelle][rang_actuel+1] == 1) etat=E_OBSTACLE_DETECTE;
+
     // les cas des deux colonnes aux extrémités
     if((rotation_droite_fait) && (colonne_actuelle == 2)) etat=E_TOURNER_GAUCHE;
     else if((rotation_gauche_fait) && (colonne_actuelle == 0)) etat=E_TOURNER_DROITE;
 
     // terminer la parcours
-    else if(rang_actuel == 10) etat = E_ATTENTE;
+    // else if(rang_actuel == 10) etat = E_ATTENTE;
+    else if(rang_actuel == 10) etat = E_RETOUR;
 
     // cas normal
     else { nb_rotations = 0; avanceEnLigne(40, 40); }
@@ -399,6 +434,7 @@ Vérifie s’il y a un obstacle devant
 */
 void etat_verif_obstacle() {
   obstacle_detecte = fonctionDetectionObjet(pin_capteur_gauche, pin_capteur_droit);
+  // if (lignes_interdites[colonne_actuelle][rang_actuel+1] == 1) etat=E_OBSTACLE_DETECTE;
   if (obstacle_detecte) etat = E_OBSTACLE_DETECTE;
   else etat = E_AVANCER;
 }
@@ -447,6 +483,73 @@ Si la cellule a déjà été vérifiée, reste sur place ou attend un nouvel év
 */
 void etat_cellule_verifiee() {
 }
+
+void etat_retour(){
+
+    if (colonne_actuelle == 0){
+      tournerDroite();
+      if(deplacement_termine){
+      rotation_droite_fait = 1;
+        deplacement_termine = 0;
+        etat = E_RETOUR1;
+      }
+    }else if(colonne_actuelle == 2 | colonne_actuelle == 1){
+      tournerGauche();
+      if(deplacement_termine){
+        rotation_gauche_fait = 1;
+        deplacement_termine = 0;
+        etat = E_RETOUR1;
+      }
+    }
+  }
+void etat_retour1(){
+  if (colonne_actuelle != 1){
+    avanceEnLigne(40,40);
+    if(deplacement_termine){
+        deplacement_termine = 0;
+        etat = E_RETOUR2;
+    }  
+  }
+}
+void etat_retour2(){
+  if (rotation_droite_fait){
+    tournerDroite();
+    if(deplacement_termine){
+      rotation_droite_fait = 0;
+      rotation_gauche_fait = 0;
+      deplacement_termine = 0;
+      etat = E_RETOUR3;
+    }
+  }else if (rotation_gauche_fait){
+    tournerGauche();
+    if(deplacement_termine){
+      rotation_gauche_fait = 0;
+      rotation_droite_fait = 0;
+      deplacement_termine = 0;
+      etat = E_RETOUR3;
+    }
+  }
+}
+void etat_retour3(){
+  retour_commencer = 1;
+  for (int i=10;i>0;i--){
+    avanceEnLigne(40,40);
+    if(deplacement_termine){
+      deplacement_termine = 0;
+    }
+  }
+  etat = E_ATTENTE;
+
+}
+  // pass logic here
+  // if (colonne_actuelle == 0){
+  //   tournerDroite();
+  //   avanceEnLigne(40, 40);
+  // } else if (colonne_actuelle == 2)
+  // {
+  //   tournerGauche();
+  //   avanceEnLigne(40, 40);
+  // };
 
 /*****************************************
  *   INITIALISATION ET BOUCLE
